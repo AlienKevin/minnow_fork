@@ -320,6 +320,78 @@ int main()
       test.execute( ExpectNoFrame {} );
     }
 
+    // test credit: Xiang Li
+    {
+      const EthernetAddress local_eth = random_private_ethernet_address();
+      const EthernetAddress remote_eth1 = random_private_ethernet_address();
+      const EthernetAddress remote_eth2 = random_private_ethernet_address();
+      NetworkInterfaceTestHarness test {
+        "different ARP mappings are independent (next_hop ip addresses in decreasing order)", local_eth, Address( "10.0.0.1", 0 ) };
+
+      // first ARP mapping
+      test.execute( ReceiveFrame { make_frame(
+        remote_eth1,
+        ETHERNET_BROADCAST,
+        EthernetHeader::TYPE_ARP,
+        serialize( make_arp( ARPMessage::OPCODE_REQUEST, remote_eth1, "10.0.0.5", {}, "10.0.0.1" ) ) ) } );
+      test.execute( ExpectFrame { make_frame(
+        local_eth,
+        remote_eth1,
+        EthernetHeader::TYPE_ARP,
+        serialize( make_arp( ARPMessage::OPCODE_REPLY, local_eth, "10.0.0.1", remote_eth1, "10.0.0.5" ) ) ) } );
+      test.execute( ExpectNoFrame {} );
+
+      test.execute( Tick { 15000 } );
+
+      // second ARP mapping
+      test.execute( ReceiveFrame { make_frame(
+        remote_eth2,
+        ETHERNET_BROADCAST,
+        EthernetHeader::TYPE_ARP,
+        serialize( make_arp( ARPMessage::OPCODE_REQUEST, remote_eth2, "10.0.0.4", {}, "10.0.0.1" ) ) ) } );
+      test.execute( ExpectFrame { make_frame(
+        local_eth,
+        remote_eth2,
+        EthernetHeader::TYPE_ARP,
+        serialize( make_arp( ARPMessage::OPCODE_REPLY, local_eth, "10.0.0.1", remote_eth2, "10.0.0.4" ) ) ) } );
+      test.execute( ExpectNoFrame {} );
+
+      test.execute( Tick { 10000 } );
+
+      // outgoing datagram to first destination
+      const auto datagram = make_datagram( "5.6.7.8", "13.12.11.10" );
+      test.execute( SendDatagram { datagram, Address( "10.0.0.5", 0 ) } );
+
+      // outgoing datagram to second destination
+      const auto datagram2 = make_datagram( "100.99.98.97", "4.10.4.10" );
+      test.execute( SendDatagram { datagram2, Address( "10.0.0.4", 0 ) } );
+
+      test.execute(
+        ExpectFrame { make_frame( local_eth, remote_eth1, EthernetHeader::TYPE_IPv4, serialize( datagram ) ) } );
+      test.execute(
+        ExpectFrame { make_frame( local_eth, remote_eth2, EthernetHeader::TYPE_IPv4, serialize( datagram2 ) ) } );
+      test.execute( ExpectNoFrame {} );
+
+      test.execute( Tick { 5010 } );
+
+      // outgoing datagram to second destination (mapping still alive)
+      const auto datagram3 = make_datagram( "150.140.130.120", "144.144.144.144" );
+      test.execute( SendDatagram { datagram3, Address( "10.0.0.4", 0 ) } );
+      test.execute(
+        ExpectFrame { make_frame( local_eth, remote_eth2, EthernetHeader::TYPE_IPv4, serialize( datagram3 ) ) } );
+      test.execute( ExpectNoFrame {} );
+
+      // outgoing datagram to second destination (mapping has expired)
+      const auto datagram4 = make_datagram( "244.244.244.244", "3.3.3.3" );
+      test.execute( SendDatagram { datagram4, Address( "10.0.0.5", 0 ) } );
+      test.execute( ExpectFrame { make_frame(
+        local_eth,
+        ETHERNET_BROADCAST,
+        EthernetHeader::TYPE_ARP,
+        serialize( make_arp( ARPMessage::OPCODE_REQUEST, local_eth, "10.0.0.1", {}, "10.0.0.5" ) ) ) } );
+      test.execute( ExpectNoFrame {} );
+    }
+
     // test credit: Matthew Harvill
     {
       const EthernetAddress local_eth = random_private_ethernet_address();
